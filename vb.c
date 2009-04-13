@@ -1,6 +1,5 @@
 #include <windows.h>
 #include "sqlite3.h"
-//#include <wtypes.h>
 #include <oleauto.h> 
 
 
@@ -16,8 +15,8 @@
 */
 
 void sqlite3RegisterUserFunctions(sqlite3 *db);
-const char* AnsiToUTF8(const char* str_sourse);
-const char* UTF8ToAnsi(const char* str_sourse);
+char* AnsiToUTF8(const char* str_sourse);
+char* UTF8ToAnsi(const char* str_sourse);
 
 /*----------------------------------------------------*/
 
@@ -31,83 +30,65 @@ BOOL WINAPI DllMain(
     return TRUE;
 }
 
-/*動くかテスト用*/
-EXPORT sqlite3* WINAPI sqlite_test(void)
-{
-	int ret;
-	sqlite3* db;
-	ret = sqlite3_open("c:\\temp\\abc.db",&db);
-	if (ret != SQLITE_OK)
-	{
-		sqlite3_close(db);
-	}
-	ret=sqlite3_exec(db,"create table test (id,name);",NULL,NULL,NULL);
-	ret = sqlite3_close(db);
-	return db;
-}
 
-/*sqlite3_open()が良く分からない*/
-EXPORT sqlite3* _stdcall vb_sqlite3_open2(const char *zFilename)
-{
-  sqlite3* db;
-  char* sFilename;
-  int ret;
-  sFilename=AnsiToUTF8(zFilename);
-  ret = sqlite3_open(sFilename, &db);
-  free(sFilename);
-  if (ret != SQLITE_OK)
-    {
-      sqlite3_close(db);
-      return 0;
-    }
-  return db;
-}
 
 /*sqlite3のバージョンを返す*/
-EXPORT const char* __stdcall vb_sqlite3_libversion(void)
+EXPORT BSTR __stdcall vb_sqlite3_libversion(void)
 {
-    return sqlite3_libversion();
+  const char* ret;
+  ret = sqlite3_libversion();
+  return SysAllocStringByteLen(ret, strlen(ret));
 }
 
 /*DBオープン*/
-int __stdcall vb_sqlite3_open(const char *zFilename, sqlite3 **ppDb, int flags)
+//EXPORT int __stdcall vb_sqlite3_open(const char *zFilename, int* handle , int flags)
+EXPORT int __stdcall vb_sqlite3_open(const char *zFilename, sqlite3** db , int flags)
 {
   int ret;
-  char* sFilename;
+  char* zMBFilename;
+  //sqlite3 *db;
   
   /*一度UTF8にエンコードする*/
-  sFilename = AnsiToUTF8(zFilename);
- 
+  zMBFilename = AnsiToUTF8(zFilename);
+
   /*DBを開く*/
   if (flags == 0){
       /*従来の開き方*/
-      ret = sqlite3_open(sFilename, ppDb);	
+      ret = sqlite3_open(zMBFilename, db);
+      if (ret != SQLITE_OK){
+        sqlite3_close(*db);
+        ret = -1;
+      }
   }else{
       /*新しいパターン。開き方を設定できる（読み取り専用など）　*/
-      ret = sqlite3_open_v2(sFilename,ppDb,flags, 0);
+      ret = sqlite3_open_v2(zMBFilename, db, flags, 0);
+      if (ret != SQLITE_OK){
+        sqlite3_close(*db);
+        ret = -1;
+      }
   }
 
   /*メモリ開放*/
-  free(sFilename);
+  free(zMBFilename);
 
   /*ユーザ定義関数*/
-  sqlite3RegisterUserFunctions(*ppDb);
+  sqlite3RegisterUserFunctions(*db);
  
+  //*handle = (int)db;
   return ret;
 }
 
 
 /*DBを閉じる*/
-int __stdcall vb_sqlite3_close(sqlite3 *db)
+EXPORT int __stdcall vb_sqlite3_close(sqlite3* db)
 {
   int ret;
   ret = sqlite3_close(db);
-  //ZeroMemory(db,sizeof(db));
   return ret;
 }
 
 /*DMLステートメント実行用*/
-int __stdcall vb_sqlite3_exec(sqlite3 *db, const char *zSql, BSTR* ErrMsg)
+EXPORT int __stdcall vb_sqlite3_exec(sqlite3 *db, const char *zSql, BSTR* ErrMsg)
 {
   int ret;
   char* szsql;
@@ -142,48 +123,63 @@ int __stdcall vb_sqlite3_exec(sqlite3 *db, const char *zSql, BSTR* ErrMsg)
 }
 
 /* sqlite3_mprintf() のメモリ開放用 */
-void __stdcall vb_sqlite3_free(void* z)
+EXPORT void __stdcall vb_sqlite3_free(void* z)
 {
  sqlite3_free(z);
 } 
 
 /*SQL文をコンパイル*/
-int __stdcall vb_sqlite3_prepare(sqlite3 *db, const char *zSql, sqlite3_stmt **ppStmt, const char **pzTail)
+//EXPORT int __stdcall vb_sqlite3_prepare(sqlite3 *db, const char *zSql, sqlite3_stmt **ppStmt, const char **pzTail)
+EXPORT int __stdcall vb_sqlite3_prepare(sqlite3 *db, const char *zSql, sqlite3_stmt **ppStmt, BSTR *pzTail)
 {
   int ret;
   char* szSql;
+  const char* pzTailUTF8;
+  char* szTail;
+
   szSql = AnsiToUTF8(zSql);
   
   //return sqlite3_prepare(db, zSql,-1, ppStmt, pzTail);
-  ret = sqlite3_prepare_v2(db, szSql,-1, ppStmt, pzTail);
+  //ret = sqlite3_prepare_v2(db, szSql,-1, ppStmt, pzTail);
+  ret = sqlite3_prepare_v2(db, szSql,-1, ppStmt, &pzTailUTF8);
+
+  szTail = UTF8ToAnsi(pzTailUTF8);
+  *pzTail = SysAllocStringByteLen(szTail,strlen(szTail));
 
   free(szSql);
-
+  free(szTail);
+  
   return ret;
 }
 
 /*SQL文をコンパイルして構築したものを実行する*/
-int __stdcall vb_sqlite3_step(sqlite3_stmt *pStmt)
+EXPORT int __stdcall vb_sqlite3_step(sqlite3_stmt *pStmt)
 {
   return sqlite3_step(pStmt);
 }
 
 /*コンパイルしたSQLを削除する*/
-int __stdcall vb_sqlite3_finalize(sqlite3_stmt *pStmt)
+EXPORT int __stdcall vb_sqlite3_finalize(sqlite3_stmt *pStmt)
 {
   return sqlite3_finalize(pStmt);
 }
 
 /*フィールド数を返す*/
-int __stdcall vb_sqlite3_column_count(sqlite3_stmt *pStmt)
+EXPORT int __stdcall vb_sqlite3_column_count(sqlite3_stmt *pStmt)
 {
   return sqlite3_column_count(pStmt);
 }
 
-/*フィールドの値を取得*/
-const unsigned char* __stdcall vb_sqlite3_column_text (sqlite3_stmt *pStmt, int iCol)
+/*フィールド数を返す２*/
+EXPORT int __stdcall vb_sqlite3_data_count(sqlite3_stmt *pStmt)
 {
-  char* szretvalue;
+  return sqlite3_data_count(pStmt);
+}
+
+/*フィールドの値を取得*/
+EXPORT BSTR __stdcall vb_sqlite3_column_text (sqlite3_stmt *pStmt, int iCol)
+{
+  const unsigned char* szretvalue;
   char* szcoltxt;
   BSTR  bstrcoltxt;
   
@@ -199,17 +195,16 @@ const unsigned char* __stdcall vb_sqlite3_column_text (sqlite3_stmt *pStmt, int 
 }
 
 /*フィールドのタイプを取得*/
-int __stdcall vb_sqlite3_column_type(sqlite3_stmt *pStmt, int iCol)
+EXPORT int __stdcall vb_sqlite3_column_type(sqlite3_stmt *pStmt, int iCol)
 {
   return sqlite3_column_type(pStmt, iCol);
 }
 
-
 /*フィールド名を取得*/
-BSTR __stdcall vb_sqlite3_column_name(sqlite3_stmt *pStmt ,int iCol)
+EXPORT BSTR __stdcall vb_sqlite3_column_name(sqlite3_stmt *pStmt ,int iCol)
 {
   
-  char* pszretvalue;
+  const char* pszretvalue;
   char* pszcolname;
   BSTR  bstrcolname;
 
@@ -225,14 +220,13 @@ BSTR __stdcall vb_sqlite3_column_name(sqlite3_stmt *pStmt ,int iCol)
 
 }
 
-
 /*コンパイルしたSQL文にバインドするためのもの*/
-int __stdcall vb_sqlite3_bind_double(sqlite3_stmt *pStmt, int iCol, double dValue )
+EXPORT int __stdcall vb_sqlite3_bind_double(sqlite3_stmt *pStmt, int iCol, double dValue )
 {
   return sqlite3_bind_double(pStmt, iCol, dValue);
 }
 
-int __stdcall vb_sqlite3_bind_int(sqlite3_stmt *pStmt, int iCol, int iValue)
+EXPORT int __stdcall vb_sqlite3_bind_int(sqlite3_stmt *pStmt, int iCol, int iValue)
 {
   return sqlite3_bind_int(pStmt, iCol, iValue);
 }
@@ -240,32 +234,34 @@ int __stdcall vb_sqlite3_bind_int(sqlite3_stmt *pStmt, int iCol, int iValue)
 //int sqlite3_bind_null(sqlite3_stmt*, int);
 
 /*コンパイルした文にバインドするためのもの*/
-int __stdcall vb_sqlite3_bind_text(sqlite3_stmt *pStmt, int iCol, const char *sValue )
+EXPORT int __stdcall vb_sqlite3_bind_text(sqlite3_stmt *pStmt, int iCol, const char *sValue )
 {
   int ret;
   char* szValue;
   szValue = AnsiToUTF8(sValue);
   ret = sqlite3_bind_text(pStmt, iCol, szValue, -1, SQLITE_TRANSIENT);
+  //ret = sqlite3_bind_text(pStmt, iCol, szValue, -1, SQLITE_STATIC);
+  
   free(szValue);
   return ret;
 }
 
 /*コンパイルした文にバインドするためのもの*/
-int __stdcall vb_sqlite3_reset(sqlite3_stmt *pStmt)
+EXPORT int __stdcall vb_sqlite3_reset(sqlite3_stmt *pStmt)
 {
   return sqlite3_reset(pStmt);
 }
 
 /*SQLの全てのパラメータをNULLに設定*/
-int __stdcall vb_sqlite3_clear_bindings(sqlite3_stmt *pStmt)
+EXPORT int __stdcall vb_sqlite3_clear_bindings(sqlite3_stmt *pStmt)
 {
   return sqlite3_clear_bindings(pStmt);
 }
 
 /*エラー情報取得*/
-BSTR __stdcall vb_sqlite3_errmsg(sqlite3* db)
+EXPORT BSTR __stdcall vb_sqlite3_errmsg(sqlite3* db)
 {
-  char* retValue;
+  const char* retValue;
   char* szValue;
   BSTR bstrValue;
   
@@ -282,7 +278,7 @@ BSTR __stdcall vb_sqlite3_errmsg(sqlite3* db)
 */
 
 /*ANSIからUTF8に変換する関数*/
-const char* AnsiToUTF8(const char* str_sourse)
+char* AnsiToUTF8(const char* str_sourse)
 {
   size_t   wcsize;
   size_t   mbsize;
@@ -305,7 +301,7 @@ const char* AnsiToUTF8(const char* str_sourse)
 }
 
 /*UTF8からANSIへ変換する関数*/
-const char* UTF8ToAnsi(const char* str_sourse) 
+char* UTF8ToAnsi(const char* str_sourse) 
 {
     size_t   wcsize;
     size_t   mbsize;
@@ -325,6 +321,72 @@ const char* UTF8ToAnsi(const char* str_sourse)
     free(pszWCstr);
     return pszMBstr;
 }
+
+/*
+**********************************************************************
+** SQLite3のソースファイル「os_win.c」から引用する。
+** [sqlite3_win32_mbcs_to_utf8]はエクスポートされているのでそれを使う
+**********************************************************************
+*/
+/*
+** UTF-8 ⇒ MS-UNICODE
+*/
+static WCHAR *utf8ToUnicode(const char *zFilename){
+  int nChar;
+  WCHAR *zWideFilename;
+
+  nChar = MultiByteToWideChar(CP_UTF8, 0, zFilename, -1, NULL, 0);
+  zWideFilename = malloc( nChar*sizeof(zWideFilename[0]) );
+  if( zWideFilename==0 ){
+    return 0;
+  }
+  nChar = MultiByteToWideChar(CP_UTF8, 0, zFilename, -1, zWideFilename, nChar);
+  if( nChar==0 ){
+    free(zWideFilename);
+    zWideFilename = 0;
+  }
+  return zWideFilename;
+}
+
+
+/*
+** MS-UNICODE ⇒ ANSI
+*/
+static char *unicodeToMbcs(const WCHAR *zWideFilename){
+  int nByte;
+  char *zFilename;
+  int codepage = AreFileApisANSI() ? CP_ACP : CP_OEMCP;
+
+  nByte = WideCharToMultiByte(codepage, 0, zWideFilename, -1, 0, 0, 0, 0);
+  zFilename = malloc( nByte );
+  if( zFilename==0 ){
+    return 0;
+  }
+  nByte = WideCharToMultiByte(codepage, 0, zWideFilename, -1, zFilename, nByte,
+                              0, 0);
+  if( nByte == 0 ){
+    free(zFilename);
+    zFilename = 0;
+  }
+  return zFilename;
+}
+
+/*
+** UTF-8 ⇒ ANSI
+*/
+static char *utf8ToMbcs(const char *zFilename){
+  char *zFilenameMbcs;
+  WCHAR *zTmpWide;
+
+  zTmpWide = utf8ToUnicode(zFilename);
+  if( zTmpWide==0 ){
+    return 0;
+  }
+  zFilenameMbcs = unicodeToMbcs(zTmpWide);
+  free(zTmpWide);
+  return zFilenameMbcs;
+}
+
 
 /* user function add */
 static void halfFunc(
