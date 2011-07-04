@@ -1,5 +1,5 @@
 #include <windows.h>
-#include "sqlite3.h"
+#include "sqlite-amalgamation-3070701/sqlite3.h"
 #include <oleauto.h> 
 
 
@@ -7,6 +7,8 @@
 #undef EXPORT
 #endif
 #define EXPORT __declspec(dllexport)
+
+static sqlite3 *db_handle = 0;
 
 /*
 **----------------------------------------------------- 
@@ -45,11 +47,11 @@ EXPORT BSTR __stdcall vb_sqlite3_libversion(void)
 EXPORT int __stdcall vb_sqlite3_open(const char *zFilename, sqlite3** db , int flags)
 {
   int ret;
-  char* zMBFilename;
-  //sqlite3 *db;
+  //char *zMBFilename=NULL;
   
   /*一度UTF8にエンコードする*/
-  zMBFilename = AnsiToUTF8(zFilename);
+  //zMBFilename = AnsiToUTF8(zFilename);
+  const char *zMBFilename = (const char *)sqlite3_win32_mbcs_to_utf8(zFilename);
 
   /*DBを開く*/
   if (flags == 0){
@@ -69,7 +71,7 @@ EXPORT int __stdcall vb_sqlite3_open(const char *zFilename, sqlite3** db , int f
   }
 
   /*メモリ開放*/
-  free(zMBFilename);
+  free(&zMBFilename);
 
   /*ユーザ定義関数*/
   sqlite3RegisterUserFunctions(*db);
